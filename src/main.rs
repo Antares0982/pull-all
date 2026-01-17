@@ -25,18 +25,34 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // 并发执行git pull任务
+    // 并发执行git pull或fetch任务
     let mut tasks = vec![];
 
     for dir in directories.iter() {
         let dir_clone = dir.clone();
         let task = tokio::spawn(async move {
-            // 执行 git pull
-            let output = Command::new("git")
-                .arg("pull")
+            // 检查是否有upstream
+            let upstream_check = Command::new("git")
+                .args(&["rev-parse", "--abbrev-ref", "@{upstream}"])
                 .current_dir(&dir_clone)
                 .output()
                 .await;
+
+            let output = if upstream_check.as_ref().unwrap().status.success() {
+                // 有upstream，执行pull
+                Command::new("git")
+                    .arg("pull")
+                    .current_dir(&dir_clone)
+                    .output()
+                    .await
+            } else {
+                // 没有upstream，只fetch
+                Command::new("git")
+                    .arg("fetch")
+                    .current_dir(&dir_clone)
+                    .output()
+                    .await
+            };
 
             (dir_clone, output)
         });
@@ -81,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
             .collect::<Vec<_>>()
             .join("\n");
         notify_message = format!(
-            "Failed to pull all the following {} repositories:\n{}",
+            "Failed to update all the following {} repositories:\n{}",
             fail_num, failed_list
         );
     } else if fail_num > 0 {
@@ -92,12 +108,12 @@ async fn main() -> anyhow::Result<()> {
             .collect::<Vec<_>>()
             .join("\n");
         notify_message = format!(
-            "Pulled {} repositories successfully, but failed to pull the following {} repositories:\n{}",
+            "Updated {} repositories successfully, but failed to update the following {} repositories:\n{}",
             success_num, fail_num, failed_list
         );
     } else {
         notify_title = "Successful";
-        notify_message = format!("All {} repositories were pulled successfully", total);
+        notify_message = format!("All {} repositories were updated successfully", total);
     }
 
     let _ = Command::new("notify-send")
